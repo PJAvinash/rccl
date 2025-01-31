@@ -43,7 +43,7 @@ class Primitives<
   Fan fan;
   int index; // Peer index I'm responsible for
   int flags;
-  int group;
+  const int group;
   uint64_t step;
   struct ncclConnFifo* connFifo = NULL;
   T* connEltsFifo;
@@ -55,6 +55,7 @@ class Primitives<
   uint32_t* next_hdp_reg;
   uint64_t* barriers;
   uint64_t* barrier_next;
+  int repeat;
 
 #if defined(ENABLE_NPKIT)
 public:
@@ -113,12 +114,16 @@ private:
     if (((flags & (Recv*RoleWaitRecv)) && !noRecvWait) ||
         ((flags & (Send*RoleWaitSend)) && !noSendWait)) {
       int spins = 0;
+      repeat = 50;
       while (connStepCache + (isSendNotRecv ? NCCL_STEPS : 0) < step + StepPerSlice) {
         __builtin_amdgcn_s_sleep(1);
         connStepCache = loadStepValue(connStepPtr);
         if (checkAbort(spins)) break;
         //if (spins == 0) printf("r=%d b=%d t=%d SPUN OUT got=%d want=%d\n", ncclShmem.comm.rank, blockIdx.x, threadIdx.x, int(connStepCache + (isSendNotRecv ? NCCL_STEPS : 0)), int(step+StepPerSlice));
-        if (spins == 0) traceData(__LINE__, threadIdx.x, int(connStepCache + (isSendNotRecv ? NCCL_STEPS : 0)), int(step+StepPerSlice));
+        if (spins == 0 && repeat > 0) {
+          repeat --;
+          traceData(__LINE__, threadIdx.x, int(connStepCache + (isSendNotRecv ? NCCL_STEPS : 0)), int(step+StepPerSlice));
+        }
       }
       __asm__ __volatile__("s_wakeup");
     }

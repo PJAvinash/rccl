@@ -250,7 +250,11 @@ static ncclResult_t recvSetup(struct ncclComm* comm, struct ncclTopoGraph* graph
   NCCLCHECK(ncclTopoCheckGdr(comm->topo, myInfo->busId, netId, 0, &req.useGdr));
 
   // Determine whether we need to flush the GDR buffer on recv or not
-  if (req.useGdr) NCCLCHECK(ncclTopoNeedFlush(comm->topo, myInfo->busId, &req.needFlush));
+  if (req.useGdr) {
+    NCCLCHECK(ncclTopoNeedFlush(comm->topo, myInfo->busId, &req.needFlush));
+    CUDACHECK(hipDeviceGetAttribute((int*)&req.curr_hdp_reg, hipDeviceAttributeHdpMemFlushCntl, myInfo->cudaDev));
+    recv->conn.curr_hdp_reg = req.curr_hdp_reg;
+  }
 
   // We don't support PXN on receive yet
   tpProxyRank = comm->topParentRanks[myInfo->rank];
@@ -667,6 +671,7 @@ static ncclResult_t recvProxySetup(struct ncclProxyConnection* connection, struc
   resources->needFlush = req->needFlush;
   resources->channelId = req->channelId;
   resources->connIndex = req->connIndex;
+  resources->curr_hdp_reg = req->curr_hdp_reg;
   ncclNetProperties_t props;
   NCCLCHECK(proxyState->ncclNet->getProperties(req->netDev, &props));
   /* DMA-BUF support */
@@ -1175,7 +1180,7 @@ static ncclResult_t sendProxyProgress(struct ncclProxyState* proxyState, struct 
             int sharedBuffSlot = sub->posted%maxDepth;
             int offset;
             NCCLCHECK(sharedBuffersGet(proxyState, sub->channelId, sharedBuffSlot*args->nsubs+s, &offset, NULL));
-            resources->recvMem->connFifo[buffSlot].offset = offset;
+            __atomic_store_n(&resources->recvMem->connFifo[buffSlot].offset, offset, __ATOMIC_RELAXED);
             __sync_synchronize();
           }
           volatile uint64_t* sendHead = resources->gdcSync ? resources->gdcSync : &resources->sendMem->head;
@@ -1362,6 +1367,8 @@ static ncclResult_t sendProxyProgress(struct ncclProxyState* proxyState, struct 
   return ncclSuccess;
 }
 
+RCCL_PARAM(NetHdpFlush, "NET_HDP_FLUSH", 0);
+
 static ncclResult_t recvProxyProgress(struct ncclProxyState* proxyState, struct ncclProxyArgs* args) {
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_NET_COLLECT_POLL_CNT)
   g_npkit_net_poll_cnt++;
@@ -1441,7 +1448,7 @@ static ncclResult_t recvProxyProgress(struct ncclProxyState* proxyState, struct 
               int sharedBuffSlot = sub->posted%maxDepth;
               int offset;
               NCCLCHECK(sharedBuffersGet(proxyState, sub->channelId, sharedBuffSlot*args->nsubs+s+i, &offset, sizes+subCount));
-              connFifo[buffSlot].offset = offset;
+              __atomic_store_n(&connFifo[buffSlot].offset, offset, __ATOMIC_RELAXED);
               ptrs[subCount] = localBuff+offset;
             }
           } else {
@@ -1550,16 +1557,31 @@ static ncclResult_t recvProxyProgress(struct ncclProxyState* proxyState, struct 
           if (totalSize > 0 && p == NCCL_PROTO_SIMPLE && needFlush) {
             // GDRCOPY support
             struct recvNetResources* resources = (struct recvNetResources*) (subGroup->connection->transportResources);
+            if (rcclParamNetHdpFlush() && resources->curr_hdp_reg) {
+              static bool once = true;
+              *resources->curr_hdp_reg = 0x1;
+              __sync_synchronize();
+              if (once) {
+                once = false;
+                INFO(NCCL_INIT, "%s: flushed HDP %p", __func__, resources->curr_hdp_reg);
+              }
+            }
             if (resources->gdcFlush) {
 #if defined (__x86_64__)
               // Force a PCI-E read from GPU memory
+              static bool once = true;
               asm volatile ("mov (%0), %%eax" :: "l"(resources->gdcFlush) : "%eax");
+              if (once) {
+                once = false;
+                INFO(NCCL_INIT, "%s: issued GDC flush", __func__);
+              }
 #else
               WARN("NET: GDR Flush only supported on x86_64");
               return ncclInternalError;
 #endif
             } else {
               int subCount = 0;
+              static bool once = true;
               for (int i=0; i<subGroup->groupSize; i++) {
                 struct ncclProxySubArgs* sub = subGroup + i;
                 if (step < sub->nsteps) {
@@ -1576,6 +1598,10 @@ static ncclResult_t recvProxyProgress(struct ncclProxyState* proxyState, struct 
               }
               struct recvNetResources* resources = (struct recvNetResources*) (subGroup->connection->transportResources);
               NCCLCHECK(proxyState->ncclNet->iflush(resources->netRecvComm, subCount, ptrs, sizes, mhandles, subGroup->requests+(step%NCCL_STEPS)));
+              if (once) {
+                once = false;
+                INFO(NCCL_INIT, "%s: issued GDR flush", __func__);
+              }
             }
           }
           args->idle = 0;

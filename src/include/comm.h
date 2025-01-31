@@ -580,6 +580,7 @@ struct ncclComm {
   union ncclCollTraceTail *collTraceTail;
   pthread_t collTraceThread;
   volatile bool collTraceExit;
+  bool collTraceEnabled;
 #endif
 
   ncclConfig_t config;
