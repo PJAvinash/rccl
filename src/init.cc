@@ -256,62 +256,122 @@ void *ncclCommThreadMain(void *arg) {
       for (int i = 0; i < count; i++) {
         volatile struct ncclCollTrace *td = comm->collTrace+COLLTRACE_NUM_ITEMS*channel+head[channel]%COLLTRACE_NUM_ITEMS;
         head[channel] ++;
-        uint8_t type = td->type;
-        if (type == ncclCollTraceNotReady)
-          continue;
+        const uint8_t type = td->type;
+        const uint16_t fIdx = td->funcIndex;
         char line[1024];
         int offset = 0;
-        uint16_t fIdx = td->funcIndex;
-        if (type == ncclCollTraceDataType) {
-          sprintf(line, "## [%012.6f] [%02d:%02d-%02d:%02x] L:%04d DT %08x %016lx %016lx",
-            (double)(td->timeStamp)/vega_gpu_rtc_freq, comm->rank, td->bid, td->channelId, td->tid,             fIdx, td->data_0, td->opCount, td->data_1);
-        } else {
-          if (type & ncclCollTraceP2pElemType)
-            sprintf(line, "## [%012.6f] [%02d:%02d-%02d:%02x] %06x-%06x", (double)(td->timeStamp)/vega_gpu_rtc_freq, comm->rank, td->bid, td->channelId, td->tid, td->p2pOpCount[0], td->p2pOpCount[1]);
-          else
-            sprintf(line, "## [%012.6f] [%02d:%02d-%02d:%02x] %06lx", (double)(td->timeStamp)/vega_gpu_rtc_freq, comm->rank, td->bid, td->channelId, td->tid, td->opCount);
+        switch (type)
+        {
+        case ncclCollTraceNotReady:
+          continue;
+          break;
+        case ncclCollTraceDataType:
+          sprintf(line, "## [%012.6f] [%02d:%02d-%02d:%02x] L:%04d DT %08x %016lx %016lx",(double)(td->timeStamp)/vega_gpu_rtc_freq, comm->rank, td->bid, td->channelId, td->tid,fIdx, td->data_0, td->opCount, td->data_1);
+          break;
+        case (ncclCollTraceP2pElemType|ncclCollTraceKernelLaunchType):
+          sprintf(line, "## [%012.6f] [%02d:%02d-%02d:%02x] %06x-%06x", (double)(td->timeStamp)/vega_gpu_rtc_freq, comm->rank, td->bid, td->channelId, td->tid, td->p2pOpCount[0], td->p2pOpCount[1]);
           offset = strlen(line);
-          if (type == ncclCollTraceCollElemType) {
-            sprintf(line+offset, " CE %s nw %d bi %d nc %d root %d busId %lx nRanks %d", funcNames[fIdx], td->coll.nWarps, td->coll.bid, td->coll.nChannels, td->coll.root, comm->busId, comm->nRanks);
-          } else if (type == ncclCollTraceP2pElemType) {
-            sprintf(line+offset, " Recv %d -> %d/%d/%d/%d ConnIdx/LL/Reg/nc %d/%d/%d/%d -> Send %d cb %d busId %lx nRanks %d",
-              td->p2p.recvRank, td->p2p.recvConnIndex, td->p2p.recvProtoLL, td->p2p.recvRegistered, td->p2p.nRecvChannels, td->p2p.sendConnIndex, td->p2p.sendProtoLL, td->p2p.sendRegistered, td->p2p.nSendChannels, td->p2p.sendRank, td->p2p.channelBase,
-              comm->busId, comm->nRanks);
-          } else {
-            switch (type&0xf) {
-              case ncclCollTraceKernelLaunchType:
-              case ncclCollTraceCollLaunchType:
-                if ((type&0xf) == ncclCollTraceKernelLaunchType)
-                  sprintf(line+offset, " KL HWID %8x %s", td->data_0, funcNames[fIdx]);
-                else if ((type&0xf) == ncclCollTraceCollLaunchType)
-                  sprintf(line+offset, " CL %d %s", td->batchIx, funcNames[fIdx]);
-                offset = strlen(line);
-                if ((type&0xf0) == ncclCollTraceCollElemType)
-                  sprintf(line+offset, " nw %d bi %d nc %d root %d busId %lx nRanks %d", td->coll.nWarps, td->coll.bid, td->coll.nChannels, td->coll.root, comm->busId, comm->nRanks);
-                else if ((type&0xf0) == ncclCollTraceP2pElemType)
-                  sprintf(line+offset, " Recv %d -> %d/%d/%d/%d ConnIdx/LL/Reg/nc %d/%d/%d/%d -> Send %d cb %d busId %lx nRanks %d",
-                    td->p2p.recvRank, td->p2p.recvConnIndex, td->p2p.recvProtoLL, td->p2p.recvRegistered, td->p2p.nRecvChannels, td->p2p.sendConnIndex, td->p2p.sendProtoLL, td->p2p.sendRegistered, td->p2p.nSendChannels, td->p2p.sendRank, td->p2p.channelBase,
-                    comm->busId, comm->nRanks);
-                break;
-              case ncclCollTraceKernelEndType:
-                sprintf(line+offset, " KE busId %lx nRanks %d", comm->busId, comm->nRanks);
-                break;
-              case ncclCollTraceAbortType:
-                sprintf(line+offset, " Abort");
-                break;
-              default:
-                sprintf(line+offset, " unknown collective trace data type");
-                break;
-            }
-          }
+          sprintf(line+offset, " KL %s [%02d:%02d-%02d:%02x] HWID %8x ",funcNames[fIdx],comm->rank, td->bid, td->channelId, td->tid, td->data_0);
+          break;
+        case (ncclCollTraceP2pElemType|ncclCollTraceKernelEndType):
+          sprintf(line, "## [%012.6f] [%02d:%02d-%02d:%02x] %06x-%06x", (double)(td->timeStamp)/vega_gpu_rtc_freq, comm->rank, td->bid, td->channelId, td->tid, td->p2pOpCount[0], td->p2pOpCount[1]);
+          offset = strlen(line);
+          sprintf(line+offset, " KE %s [%02d:%02d-%02d:%02x] busId %lx nRanks %d",funcNames[fIdx],comm->rank, td->bid, td->channelId, td->tid,comm->busId, comm->nRanks);
+          break;
+        case (ncclCollTraceP2pElemType|ncclCollTraceCollLaunchType):
+          sprintf(line, "## [%012.6f] [%02d:%02d-%02d:%02x] %06x-%06x", (double)(td->timeStamp)/vega_gpu_rtc_freq, comm->rank, td->bid, td->channelId, td->tid, td->p2pOpCount[0], td->p2pOpCount[1]);
+          offset = strlen(line);
+          sprintf(line+offset, " CL %s [%02d:%02d-%02d:%02x] %d",funcNames[fIdx],comm->rank, td->bid, td->channelId, td->tid,td->batchIx);
+          offset = strlen(line);
+          sprintf(line+offset, " Recv %d -> %d/%d/%d/%d ConnIdx/LL/Reg/nc %d/%d/%d/%d -> Send %d cb %d busId %lx nRanks %d",
+            td->p2p.recvRank, td->p2p.recvConnIndex, td->p2p.recvProtoLL, td->p2p.recvRegistered, td->p2p.nRecvChannels, td->p2p.sendConnIndex, td->p2p.sendProtoLL, td->p2p.sendRegistered, td->p2p.nSendChannels, td->p2p.sendRank, td->p2p.channelBase,
+            comm->busId, comm->nRanks);
+          break;
+        case (ncclCollTraceCollElemType|ncclCollTraceKernelLaunchType):
+          sprintf(line, "## [%012.6f] [%02d:%02d-%02d:%02x] %06lx", (double)(td->timeStamp)/vega_gpu_rtc_freq, comm->rank, td->bid, td->channelId, td->tid, td->opCount);
+          offset = strlen(line);
+          sprintf(line+offset, " KL %s [%02d:%02d-%02d:%02x] HWID %8x ",funcNames[fIdx],comm->rank, td->bid, td->channelId, td->tid, td->data_0);
+          offset = strlen(line);
+          sprintf(line+offset, " nw %d bi %d nc %d root %d busId %lx nRanks %d", td->coll.nWarps, td->coll.bid, td->coll.nChannels, td->coll.root, comm->busId, comm->nRanks);
+          break;
+        case (ncclCollTraceCollElemType|ncclCollTraceKernelEndType):
+          sprintf(line, "## [%012.6f] [%02d:%02d-%02d:%02x] %06lx", (double)(td->timeStamp)/vega_gpu_rtc_freq, comm->rank, td->bid, td->channelId, td->tid, td->opCount);
+          // some discrepency in logging here
+          offset = strlen(line);
+          sprintf(line+offset, " KE %s [%02d:%02d-%02d:%02x] busId %lx nRanks %d",funcNames[fIdx],comm->rank, td->bid, td->channelId, td->tid, comm->busId, comm->nRanks);
+          // 
+          offset = strlen(line);
+          sprintf(line+offset, " nw %d bi %d nc %d root %d busId %lx nRanks %d", td->coll.nWarps, td->coll.bid, td->coll.nChannels, td->coll.root, comm->busId, comm->nRanks);
+          break;
+        case (ncclCollTraceCollElemType|ncclCollTraceCollLaunchType):
+          sprintf(line, "## [%012.6f] [%02d:%02d-%02d:%02x] %06lx", (double)(td->timeStamp)/vega_gpu_rtc_freq, comm->rank, td->bid, td->channelId, td->tid, td->opCount);
+          offset = strlen(line);
+          sprintf(line+offset, " CL %s [%02d:%02d-%02d:%02x] %d",funcNames[fIdx],comm->rank, td->bid, td->channelId, td->tid,td->batchIx);
+          offset = strlen(line);
+          sprintf(line+offset, " nw %d bi %d nc %d root %d busId %lx nRanks %d", td->coll.nWarps, td->coll.bid, td->coll.nChannels, td->coll.root, comm->busId, comm->nRanks);
+          break;
+        case (ncclCollTraceAbortType):
+          sprintf(line, "KA %s [%02d:%02d-%02d:%02x]",funcNames[fIdx],comm->rank, td->bid, td->channelId, td->tid);
+          break;
+        default:
+          sprintf(line, " unknown collective trace data type");
+          break;
         }
-        INFO(NCCL_COLL, "%s", line);
+        // if (type == ncclCollTraceNotReady)
+        //   continue;
+        // char line[1024];
+        // int offset = 0;
+        // uint16_t fIdx = td->funcIndex;
+        // if (type == ncclCollTraceDataType) {
+        //   sprintf(line, "## [%012.6f] [%02d:%02d-%02d:%02x] L:%04d DT %08x %016lx %016lx",
+        //     (double)(td->timeStamp)/vega_gpu_rtc_freq, comm->rank, td->bid, td->channelId, td->tid,             fIdx, td->data_0, td->opCount, td->data_1);
+        // } else {
+        //   if (type & ncclCollTraceP2pElemType)
+        //     sprintf(line, "## [%012.6f] [%02d:%02d-%02d:%02x] %06x-%06x", (double)(td->timeStamp)/vega_gpu_rtc_freq, comm->rank, td->bid, td->channelId, td->tid, td->p2pOpCount[0], td->p2pOpCount[1]);
+        //   else
+        //     sprintf(line, "## [%012.6f] [%02d:%02d-%02d:%02x] %06lx", (double)(td->timeStamp)/vega_gpu_rtc_freq, comm->rank, td->bid, td->channelId, td->tid, td->opCount);
+        //   offset = strlen(line);
+        //   if (type == ncclCollTraceCollElemType) {
+        //     sprintf(line+offset, " CE %s nw %d bi %d nc %d root %d busId %lx nRanks %d", funcNames[fIdx], td->coll.nWarps, td->coll.bid, td->coll.nChannels, td->coll.root, comm->busId, comm->nRanks);
+        //   } else if (type == ncclCollTraceP2pElemType) {
+        //     sprintf(line+offset, " Recv %d -> %d/%d/%d/%d ConnIdx/LL/Reg/nc %d/%d/%d/%d -> Send %d cb %d busId %lx nRanks %d",
+        //       td->p2p.recvRank, td->p2p.recvConnIndex, td->p2p.recvProtoLL, td->p2p.recvRegistered, td->p2p.nRecvChannels, td->p2p.sendConnIndex, td->p2p.sendProtoLL, td->p2p.sendRegistered, td->p2p.nSendChannels, td->p2p.sendRank, td->p2p.channelBase,
+        //       comm->busId, comm->nRanks);
+        //   } else {
+        //     switch (type&0xf) {
+        //       case ncclCollTraceKernelLaunchType:
+        //       case ncclCollTraceCollLaunchType:
+        //         if ((type&0xf) == ncclCollTraceKernelLaunchType)
+        //           sprintf(line+offset, " KL %s HWID %8x ",funcNames[fIdx], td->data_0);
+        //         else if ((type&0xf) == ncclCollTraceCollLaunchType)
+        //           sprintf(line+offset, " CL %d %s", td->batchIx, funcNames[fIdx]);
+        //         offset = strlen(line);
+        //         if ((type&0xf0) == ncclCollTraceCollElemType)
+        //           sprintf(line+offset, " nw %d bi %d nc %d root %d busId %lx nRanks %d", td->coll.nWarps, td->coll.bid, td->coll.nChannels, td->coll.root, comm->busId, comm->nRanks);
+        //         else if ((type&0xf0) == ncclCollTraceP2pElemType)
+        //           sprintf(line+offset, " Recv %d -> %d/%d/%d/%d ConnIdx/LL/Reg/nc %d/%d/%d/%d -> Send %d cb %d busId %lx nRanks %d",
+        //             td->p2p.recvRank, td->p2p.recvConnIndex, td->p2p.recvProtoLL, td->p2p.recvRegistered, td->p2p.nRecvChannels, td->p2p.sendConnIndex, td->p2p.sendProtoLL, td->p2p.sendRegistered, td->p2p.nSendChannels, td->p2p.sendRank, td->p2p.channelBase,
+        //             comm->busId, comm->nRanks);
+        //         break;
+        //       case ncclCollTraceKernelEndType:
+        //         sprintf(line+offset, " KE %s busId %lx nRanks %d",funcNames[fIdx],comm->busId, comm->nRanks);
+        //         break;
+        //       case ncclCollTraceAbortType:
+        //         sprintf(line+offset, " Abort");
+        //         break;
+        //       default:
+        //         sprintf(line+offset, " unknown collective trace data type");
+        //         break;
+        //     }
+        //   }
+        // }
+        INFO(NCCL_COLL, "%s td->type:%d", line,td->type);
         td->type = ncclCollTraceNotReady;
       }
     }
     if (comm->collTraceExit && numActiveChans == 0)
       break;
-    usleep(1000); //sleep 1ms
+    usleep(100); //sleep 0.1ms
   } while(true);
   if (comm->collTraceThread)
     pthread_exit(NULL);
