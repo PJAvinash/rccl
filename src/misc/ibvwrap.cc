@@ -7,6 +7,7 @@
 #include "ibvwrap.h"
 #include <sys/types.h>
 #include <unistd.h>
+#include <stdatomic.h>
 
 #include "ibvcore.h"
 #include "ibvsymbols.h"
@@ -158,15 +159,24 @@ ncclResult_t wrap_ibv_dealloc_pd(struct ibv_pd *pd) { /*returns 0 on success, or
   IBV_INT_CHECK_RET_ERRNO(ibvSymbols, ibv_internal_dealloc_pd, ibv_internal_dealloc_pd(pd), 0, "ibv_dealloc_pd");
 }
 
+// ncclResult_t wrap_ibv_reg_mr(struct ibv_mr **ret, struct ibv_pd *pd, void *addr, size_t length, int access) {
+//   IBV_PTR_CHECK_ERRNO(ibvSymbols, ibv_internal_reg_mr, ibv_internal_reg_mr(pd, addr, length, access), *ret, NULL, "ibv_reg_mr");
+// }
+
 ncclResult_t wrap_ibv_reg_mr(struct ibv_mr **ret, struct ibv_pd *pd, void *addr, size_t length, int access) {
+  static atomic_int num_calls = ATOMIC_VAR_INIT(0);
+  int call_number = atomic_fetch_add(&num_calls, 1);
+  INFO(NCCL_INIT,"call_number:%d wrap_ibv_reg_mr( pd = %p, addr = %p, length = %d, access = %d)",call_number,(void *)pd,(void *)addr,length,access);
   IBV_PTR_CHECK_ERRNO(ibvSymbols, ibv_internal_reg_mr, ibv_internal_reg_mr(pd, addr, length, access), *ret, NULL, "ibv_reg_mr");
 }
-
 struct ibv_mr * wrap_direct_ibv_reg_mr(struct ibv_pd *pd, void *addr, size_t length, int access) {
   if (ibvSymbols.ibv_internal_reg_mr == NULL) {
     WARN("lib wrapper not initialized.");
     return NULL;
   }
+  static atomic_int num_calls = ATOMIC_VAR_INIT(0);
+  int call_number = atomic_fetch_add(&num_calls, 1);
+  INFO(NCCL_INIT,"call_number:%d wrap_direct_ibv_reg_mr( pd = %p, addr = %p, length = %d, access = %d)",call_number,(void *)pd,(void *)addr,length,access);
   return ibvSymbols.ibv_internal_reg_mr(pd, addr, length, access);
 }
 
@@ -175,11 +185,20 @@ ncclResult_t wrap_ibv_reg_mr_iova2(struct ibv_mr **ret, struct ibv_pd *pd, void 
     return ncclInternalError;
   }
   if (ret == NULL) { return ncclSuccess; } // Assume dummy call
+  static atomic_int num_calls = ATOMIC_VAR_INIT(0);
+  int call_number = atomic_fetch_add(&num_calls, 1);
+  INFO(NCCL_INIT,"call_number:%d wrap_ibv_reg_mr_iova2( pd = %p, addr = %p, length = %d, iova = %lld, access = %d)",call_number,(void *)pd,(void *)addr,length,iova,access);
+  if(call_number >= 387){
+    INFO(NCCL_INIT,"The call!");
+  }
   IBV_PTR_CHECK_ERRNO(ibvSymbols, ibv_internal_reg_mr_iova2, ibv_internal_reg_mr_iova2(pd, addr, length, iova, access), *ret, NULL, "ibv_reg_mr_iova2");
 }
 
 /* DMA-BUF support */
 ncclResult_t wrap_ibv_reg_dmabuf_mr(struct ibv_mr **ret, struct ibv_pd *pd, uint64_t offset, size_t length, uint64_t iova, int fd, int access) {
+  static atomic_int num_calls = ATOMIC_VAR_INIT(0);
+  int call_number = atomic_fetch_add(&num_calls, 1);
+  INFO(NCCL_INIT,"call_number:%d wrap_ibv_reg_dmabuf_mr( pd = %p, offset = %lld, length = %d, iova = %lld, fd = %d, access = %d)",call_number,(void *)pd,offset,length,iova,fd,access);
   IBV_PTR_CHECK_ERRNO(ibvSymbols, ibv_internal_reg_dmabuf_mr, ibv_internal_reg_dmabuf_mr(pd, offset, length, iova, fd, access), *ret, NULL, "ibv_reg_dmabuf_mr");
 }
 
@@ -188,6 +207,9 @@ struct ibv_mr * wrap_direct_ibv_reg_dmabuf_mr(struct ibv_pd *pd, uint64_t offset
     errno = EOPNOTSUPP; // ncclIbDmaBufSupport() requires this errno being set
     return NULL;
   }
+  static atomic_int num_calls = ATOMIC_VAR_INIT(0);
+  int call_number = atomic_fetch_add(&num_calls, 1);
+  INFO(NCCL_INIT,"call_number:%d wrap_direct_ibv_reg_dmabuf_mr( pd = %p, offset = %lld, length = %d, iova = %lld, fd = %d, access = %d)",call_number,(void *)pd,offset,length,iova,fd,access);
   return ibvSymbols.ibv_internal_reg_dmabuf_mr(pd, offset, length, iova, fd, access);
 }
 
