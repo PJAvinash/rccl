@@ -188,7 +188,8 @@ ncclResult_t wrap_ibv_reg_mr_iova2(struct ibv_mr **ret, struct ibv_pd *pd, void 
   static atomic_int num_calls = ATOMIC_VAR_INIT(0);
   int call_number = atomic_fetch_add(&num_calls, 1);
   INFO(NCCL_INIT,"call_number:%d wrap_ibv_reg_mr_iova2( pd = %p, addr = %p, length = %d, iova = %lld, access = %d)",call_number,(void *)pd,addr,length,iova,access);
-  if(call_number >= 387){
+  if(call_number >= 384){
+    sleep(20);
     INFO(NCCL_INIT,"The call!");
   }
   IBV_PTR_CHECK_ERRNO(ibvSymbols, ibv_internal_reg_mr_iova2, ibv_internal_reg_mr_iova2(pd, addr, length, iova, access), *ret, NULL, "ibv_reg_mr_iova2");

@@ -1900,7 +1900,7 @@ ncclResult_t ncclIbRegMrDmaBufInternal(ncclIbNetCommDevBase* base, void* data, s
   get_aligned_ptr_and_size(data,size,&aligned_addr,&aligned_size);
   size_t pages = aligned_size/pageSize;
   ncclResult_t res;
-  pthread_mutex_lock(&ncclIbDevs[base->ibDevN].lock);
+  //pthread_mutex_lock(&ncclIbDevs[base->ibDevN].lock);
   //for (int slot=0; /*true*/; slot++) {
     //if (slot == cache->population || (uintptr_t)aligned_addr < cache->slots[slot].addr) { // didn't find in cache
       // if (cache->population == cache->capacity) { // must grow cache
@@ -1920,7 +1920,8 @@ ncclResult_t ncclIbRegMrDmaBufInternal(ncclIbNetCommDevBase* base, void* data, s
         if (coversRegionIncr){
           res = ncclSuccess;
           *mhandle = (ibv_mr*)reg->registration;
-          goto returning;
+          reg->retain();
+          return res;
         }
       }
       //did not find in cache, make a new registration and add it to cache
@@ -1956,7 +1957,7 @@ ncclResult_t ncclIbRegMrDmaBufInternal(ncclIbNetCommDevBase* base, void* data, s
     // }
   //}
 returning:
-  pthread_mutex_unlock(&ncclIbDevs[base->ibDevN].lock);
+  //   //pthread_mutex_unlock(&ncclIbDevs[base->ibDevN].lock);
   return res;
 }
 
@@ -2006,12 +2007,11 @@ ncclResult_t ncclIbDeregMrInternal(ncclIbNetCommDevBase* base, ibv_mr* mhandle) 
   //         cache->slots = NULL;
   //         cache->capacity = 0;
   //       }
-        ncclIbDevs[base->ibDevN].memRegTable.removeByRegistration((void*)mhandle);
-        NCCLCHECKGOTO(wrap_ibv_dereg_mr(mhandle), res, returning);
+  bool zeroRefs = ncclIbDevs[base->ibDevN].memRegTable.removeByRegistration((void*)mhandle);
+  if(zeroRefs) {NCCLCHECKGOTO(wrap_ibv_dereg_mr(mhandle), res, returning);}
       // }
-      
-      res = ncclSuccess;
-      goto returning;
+  res = ncclSuccess;
+  goto returning;
   //   }
   // }
   // WARN("NET/IB: could not find mr %p inside cache of %d entries", mhandle, cache->population);
