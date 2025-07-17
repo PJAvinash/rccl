@@ -242,6 +242,7 @@ ncclResult_t ncclNetFinalize(struct ncclComm* comm) {
 }
 
 ncclResult_t ncclGpuGdrSupport(struct ncclComm* comm, int* gdrSupport) {
+  LOG_CALL_NUMBER();
   constexpr int GPU_BUF_SIZE = 2*1024*1024;
 #if CUDART_VERSION >= 11030
   // In CUDA 11.3 and later we can now query the cudaDevAttrGPUDirectRDMASupported attribute

@@ -469,6 +469,7 @@ static ncclResult_t recvProxySetup(struct ncclProxyConnection* connection, struc
 }
 
 static ncclResult_t sendProxyConnect(struct ncclProxyConnection* connection, struct ncclProxyState* proxyState, void* reqBuff, int reqSize, void* respBuff, int respSize, int* done) {
+  LOG_CALL_NUMBER();
   ncclResult_t ret = ncclSuccess;
   if (reqSize != sizeof(struct collNetConnectArgs)) { WARN("sendProxyConnect: reqSize is %d != %ld", reqSize, sizeof(struct collNetConnectArgs)); return ncclInternalError; }
   struct collNetConnectArgs* args = (struct collNetConnectArgs*)reqBuff;
@@ -553,6 +554,7 @@ fail:
 }
 
 static ncclResult_t recvProxyConnect(struct ncclProxyConnection* connection, struct ncclProxyState* proxyState, void* reqBuff, int reqSize, void* respBuff, int respSize, int* done) {
+  LOG_CALL_NUMBER();
   ncclResult_t ret = ncclSuccess;
   if (reqSize != sizeof(struct collNetConnectArgs)) { WARN("recvProxyConnect: reqSize is %d != %ld", reqSize, sizeof(struct collNetConnectArgs)); return ncclInternalError; }
   struct collNetConnectArgs* args = (struct collNetConnectArgs*)reqBuff;
@@ -1297,6 +1299,7 @@ ncclResult_t ncclCollnetDeregBuffer(struct ncclComm* comm, struct ncclProxyConne
 }
 
 static ncclResult_t sendProxyRegBuffer(struct ncclProxyConnection* connection, struct ncclProxyState* proxyState, void* reqBuff, int reqSize, void* respBuff, int respSize, int* done) {
+  LOG_CALL_NUMBER();
   void* handle;
   struct collnetRegInfo* info = (struct collnetRegInfo*)reqBuff;
   struct sendResources* resources = (struct sendResources*)(connection->transportResources);
@@ -1334,6 +1337,7 @@ fail:
 }
 
 static ncclResult_t recvProxyRegBuffer(struct ncclProxyConnection* connection, struct ncclProxyState* proxyState, void* reqBuff, int reqSize, void* respBuff, int respSize, int* done) {
+  LOG_CALL_NUMBER();
   void* handle;
   struct collnetRegInfo* info = (struct collnetRegInfo*)reqBuff;
   struct recvResources* resources = (struct recvResources*)(connection->transportResources);

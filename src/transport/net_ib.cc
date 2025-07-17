@@ -29,6 +29,8 @@
 #include "ibvwrap.h"
 #include "graph/xml.h"
 
+#include "mrcache.hpp"
+
 #define MAXNAMESIZE 64
 static char ncclIbIfName[MAX_IF_NAME_SIZE+1];
 static union ncclSocketAddress ncclIbIfAddr;
@@ -76,6 +78,7 @@ struct alignas(64) ncclIbDev {
   int maxQp;
   float latency;
   struct ncclIbMrCache mrCache;
+  MemRegTable memRegTable;
   int ar; // ADAPTIVE_ROUTING
   struct ibv_port_attr portAttr;
   struct ncclIbStats stats;
@@ -644,7 +647,7 @@ ncclResult_t ncclIbInit(ncclDebugLogger_t logFunction, ncclProfilerCallback_t pr
           ncclIbDevs[ncclNIbDevs].maxQp = devAttr.max_qp;
           ncclIbDevs[ncclNIbDevs].mrCache.capacity = 0;
           ncclIbDevs[ncclNIbDevs].mrCache.population = 0;
-          ncclIbDevs[ncclNIbDevs].mrCache.slots = NULL;
+          ncclIbDevs[ncclNIbDevs].mrCache.slots = NULL; 
           NCCLCHECK(ncclIbStatsInit(&ncclIbDevs[ncclNIbDevs].stats));
 
           // Enable ADAPTIVE_ROUTING by default on IB networks
@@ -1889,7 +1892,7 @@ ncclResult_t ncclIbTest(void* request, int* done, int* size);
 ncclResult_t ncclIbRegMrDmaBufInternal(ncclIbNetCommDevBase* base, void* data, size_t size, int type, uint64_t offset, int fd, ibv_mr** mhandle) {
   static uintptr_t pageSize = (uintptr_t)get_sc_page_size();
   //if (pageSize == 0) pageSize = sysconf(_SC_PAGESIZE);
-  struct ncclIbMrCache* cache = &ncclIbDevs[base->ibDevN].mrCache;
+  //struct ncclIbMrCache* cache = &ncclIbDevs[base->ibDevN].mrCache;
   // uintptr_t addr = (uintptr_t)data & -pageSize;
   // size_t pages = ((uintptr_t)data + size - addr + pageSize-1)/pageSize;
   void* aligned_addr = NULL;
@@ -1898,16 +1901,29 @@ ncclResult_t ncclIbRegMrDmaBufInternal(ncclIbNetCommDevBase* base, void* data, s
   size_t pages = aligned_size/pageSize;
   ncclResult_t res;
   pthread_mutex_lock(&ncclIbDevs[base->ibDevN].lock);
-  for (int slot=0; /*true*/; slot++) {
-    if (slot == cache->population || (uintptr_t)aligned_addr < cache->slots[slot].addr) { // didn't find in cache
-      if (cache->population == cache->capacity) { // must grow cache
-        cache->capacity = cache->capacity < 32 ? 32 : 2*cache->capacity;
-        NCCLCHECKGOTO(ncclRealloc(&cache->slots, cache->population, cache->capacity), res, returning);
-      }
+  //for (int slot=0; /*true*/; slot++) {
+    //if (slot == cache->population || (uintptr_t)aligned_addr < cache->slots[slot].addr) { // didn't find in cache
+      // if (cache->population == cache->capacity) { // must grow cache
+      //   cache->capacity = cache->capacity < 32 ? 32 : 2*cache->capacity;
+      //   NCCLCHECKGOTO(ncclRealloc(&cache->slots, cache->population, cache->capacity), res, returning);
+      // }
       // Deregister / register
       struct ibv_mr* mr;
       unsigned int flags = IBV_ACCESS_LOCAL_WRITE|IBV_ACCESS_REMOTE_WRITE|IBV_ACCESS_REMOTE_READ;
       if (ncclIbRelaxedOrderingEnabled) flags |= IBV_ACCESS_RELAXED_ORDERING;
+
+      auto registeredRegions = ncclIbDevs[base->ibDevN].memRegTable.find(aligned_addr,aligned_size);
+      for(auto &reg: registeredRegions ){
+        // find in cache
+        bool coversRegionIncr = (reg->start <= (uintptr_t)aligned_addr) && ((reg->start + reg->length) >= ((uintptr_t)aligned_addr + aligned_size));
+        //bool coversRegionDecr = (reg->start >= (uintptr_t)aligned_addr) && ((reg->start - reg->length) <= ((uintptr_t)aligned_addr - aligned_size));
+        if (coversRegionIncr){
+          res = ncclSuccess;
+          *mhandle = (ibv_mr*)reg->registration;
+          goto returning;
+        }
+      }
+      //did not find in cache, make a new registration and add it to cache
       if (fd != -1) {
         /* DMA-BUF support */
         NCCLCHECKGOTO(wrap_ibv_reg_dmabuf_mr(&mr, base->pd, offset, size,(uint64_t)data /*iova*/, fd, flags), res, returning);
@@ -1921,23 +1937,24 @@ ncclResult_t ncclIbRegMrDmaBufInternal(ncclIbNetCommDevBase* base, void* data, s
         }
       }
       TRACE(NCCL_INIT|NCCL_NET,"regAddr=0x%lx size=%lld rkey=0x%x lkey=0x%x fd=%d", (unsigned long)aligned_addr, (long long)pages*pageSize, mr->rkey, mr->lkey, fd);
-      if (slot != cache->population) memmove(cache->slots+slot+1, cache->slots+slot, (cache->population-slot)*sizeof(struct ncclIbMr));
-      cache->slots[slot].addr = (uintptr_t)aligned_addr;
-      cache->slots[slot].pages = pages;
-      cache->slots[slot].refs = 1;
-      cache->slots[slot].mr = mr;
-      cache->population += 1;
+      // if (slot != cache->population) memmove(cache->slots+slot+1, cache->slots+slot, (cache->population-slot)*sizeof(struct ncclIbMr));
+      // cache->slots[slot].addr = (uintptr_t)aligned_addr;
+      // cache->slots[slot].pages = pages;
+      // cache->slots[slot].refs = 1;
+      // cache->slots[slot].mr = mr;
+      // cache->population += 1;
+      ncclIbDevs[base->ibDevN].memRegTable.insert(aligned_addr,aligned_size,(void*)mr); // adding it to cache
       *mhandle = mr;
       res = ncclSuccess;
       goto returning;
-    } else if (((uintptr_t)aligned_addr >= cache->slots[slot].addr) &&
-        (((uintptr_t)aligned_addr-cache->slots[slot].addr)/pageSize+pages) <= cache->slots[slot].pages) {
-      cache->slots[slot].refs += 1;
-      *mhandle = cache->slots[slot].mr;
-      res = ncclSuccess;
-      goto returning;
-    }
-  }
+    // } else if (((uintptr_t)aligned_addr >= cache->slots[slot].addr) &&
+    //     (((uintptr_t)aligned_addr-cache->slots[slot].addr)/pageSize+pages) <= cache->slots[slot].pages) {
+    //   cache->slots[slot].refs += 1;
+    //   *mhandle = cache->slots[slot].mr;
+    //   res = ncclSuccess;
+    //   goto returning;
+    // }
+  //}
 returning:
   pthread_mutex_unlock(&ncclIbDevs[base->ibDevN].lock);
   return res;
@@ -1977,26 +1994,28 @@ ncclResult_t ncclIbRegMr(void* comm, void* data, size_t size, int type, void** m
 }
 
 ncclResult_t ncclIbDeregMrInternal(ncclIbNetCommDevBase* base, ibv_mr* mhandle) {
-  struct ncclIbMrCache* cache = &ncclIbDevs[base->ibDevN].mrCache;
+  //struct ncclIbMrCache* cache = &ncclIbDevs[base->ibDevN].mrCache;
   ncclResult_t res;
   pthread_mutex_lock(&ncclIbDevs[base->ibDevN].lock);
-  for (int i=0; i < cache->population; i++) {
-    if (mhandle == cache->slots[i].mr) {
-      if (0 == --cache->slots[i].refs) {
-        memmove(&cache->slots[i], &cache->slots[--cache->population], sizeof(struct ncclIbMr));
-        if (cache->population == 0) {
-          free(cache->slots);
-          cache->slots = NULL;
-          cache->capacity = 0;
-        }
+  // for (int i=0; i < cache->population; i++) {
+  //   if (mhandle == cache->slots[i].mr) {
+  //     if (0 == --cache->slots[i].refs) {
+  //       memmove(&cache->slots[i], &cache->slots[--cache->population], sizeof(struct ncclIbMr));
+  //       if (cache->population == 0) {
+  //         free(cache->slots);
+  //         cache->slots = NULL;
+  //         cache->capacity = 0;
+  //       }
+        ncclIbDevs[base->ibDevN].memRegTable.removeByRegistration((void*)mhandle);
         NCCLCHECKGOTO(wrap_ibv_dereg_mr(mhandle), res, returning);
-      }
+      // }
+      
       res = ncclSuccess;
       goto returning;
-    }
-  }
-  WARN("NET/IB: could not find mr %p inside cache of %d entries", mhandle, cache->population);
-  res = ncclInternalError;
+  //   }
+  // }
+  // WARN("NET/IB: could not find mr %p inside cache of %d entries", mhandle, cache->population);
+  // res = ncclInternalError;
 returning:
   pthread_mutex_unlock(&ncclIbDevs[base->ibDevN].lock);
   return res;

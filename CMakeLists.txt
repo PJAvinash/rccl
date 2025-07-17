@@ -493,6 +493,7 @@ set(SRC_FILES
   src/include/info.h
   src/include/ipcsocket.h
   src/include/mnnvl.h
+  src/include/mrcache.hpp
   src/include/nccl_common.h
   src/include/net_device.h
   src/include/net.h
@@ -596,6 +597,7 @@ set(SRC_FILES
   src/misc/ibvsymbols.cc
   src/misc/ibvwrap.cc
   src/misc/ipcsocket.cc
+  src/misc/mrcache.cc
   src/misc/npkit.cc
 # src/misc/nvmlwrap.cc
   src/misc/nvmlwrap_stub.cc

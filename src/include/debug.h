@@ -29,6 +29,12 @@ extern char ncclLastError[];
 #define WARN(...) ncclDebugLog(NCCL_LOG_WARN, NCCL_ALL, __FILE__, __LINE__, __VA_ARGS__)
 #define INFO(FLAGS, ...) ncclDebugLog(NCCL_LOG_INFO, (FLAGS), __func__, __LINE__, __VA_ARGS__)
 #define TRACE_CALL(...) ncclDebugLog(NCCL_LOG_TRACE, NCCL_CALL, __func__, __LINE__, __VA_ARGS__)
+#define LOG_CALL_NUMBER() \
+  do { \
+    static int num_calls = 0; \
+    int call_number = __sync_fetch_and_add(&num_calls, 1); \
+    INFO(NCCL_INIT, "call_number:%d func:%s", call_number, __func__); \
+  } while (0)
 
 #ifdef ENABLE_TRACE
 #define TRACE(FLAGS, ...) ncclDebugLog(NCCL_LOG_TRACE, (FLAGS), __func__, __LINE__, __VA_ARGS__)
