@@ -2120,9 +2120,12 @@ static ncclResult_t topoGetAlgoInfo(
     int minNChannels = ncclParamMinNchannels();
     // Ring/Tree channel tuning
     INFO(NCCL_INIT, "minNChannels:%i", minNChannels);
-    while (nBytes < nc * nt * threadThreshold && nc > minNChannels) {
-      if (nc >= 2) nc--;
-      else break;
+    // while (nBytes < nc * nt * threadThreshold && nc > minNChannels) {
+    //   if (nc >= 2) nc--;
+    //   else break;
+    // }
+    if(nBytes < nc * nt * threadThreshold && nc > minNChannels){
+      nc = std::max(1,std::max(minNChannels+1,(int)divUp(nBytes,std::max(1,nt * threadThreshold)))-1);
     }
     INFO(NCCL_INIT, "post-adjustment based on threadThreshold:%i nBytes:%lu nc:%i", threadThreshold, nBytes, nc);
     rcclOverrideChannels(comm, info->func, nBytes, nc);
